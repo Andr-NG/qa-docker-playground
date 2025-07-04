@@ -16,7 +16,7 @@ on:
         default: "default_example"
 
 jobs:
-  test:
+  run_docker_test:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout repository
