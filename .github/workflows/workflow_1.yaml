@@ -13,13 +13,15 @@ on:
         description: 'does not do anything, but serves as an example of inputs'
         type: string
         required: true
-        type: string
         default: "default_example"
 
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
     - name: Run tests in Docker
       run: |
         docker build -t my-docker-test .
