@@ -1,0 +1,32 @@
+name: workflow
+
+on:
+  workflow_dispatch:
+    inputs:
+      example_input_1:
+        description: 'does not do anything, but serves as an example of inputs'
+        type: choice
+        options:
+          - input_1
+          - input_2
+      example_input_2:
+        description: 'does not do anything, but serves as an example of inputs'
+        type: string
+        required: true
+        type: string
+        default: "default_example"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Run tests in Docker
+      run: |
+        docker build -t my-docker-test .
+        docker run --rm \
+          -e CURRENCY=${{ vars.CURRENCY }} \
+          -e CAPITAL=${{ vars.CAPITAL }} \
+          -e LANGUAGE=${{ vars.LANGUAGE }} \
+          my-docker-test
+        
+

@@ -1,0 +1,148 @@
+name: API Test Run
+run-name: API Test - ${{ inputs.backend_env }} - pytest ${{ inputs.run_test || 'all tests' }}
+
+on:
+    workflow_dispatch:
+        inputs:
+            launcher_url_version:
+                description: 'Specific launcher version to get the correct URL. Can be ignored. Launcher URLs are hardcoded'
+                default: 'v1'
+                type: choice
+                options:
+                  - v1
+                  - v2
+                  - v3
+            backend_env:
+                description: 'Backend environment to run tests against'
+                required: true
+                default: 'Multilogin EU'
+                type: choice
+                options:
+                    - DEV
+                    - QA
+                    - STAGING-EU
+                    - Multilogin EU
+                    - INDIGO_PROD
+                    - INDIGO_DEV
+                    - MLX_LT
+            bucket: 
+                description: 'Select the S3 bucket'
+                required: true
+                default: 'PROD'
+                type: choice
+                options:
+                    - DEV
+                    - PROD
+            adapter_version:
+                description: 'Adapter version from s3'
+                required: true
+                default: 1.2.0 # Latest as of 02.2025
+                type: string  
+            launcher_build:
+                description: 'Select the build version'
+                required: true
+                default: 'master'
+            run_test:
+                description: 'Specify a certain module/test file or pytest marker to start (tests/proxy/, -k "test_function" etc.). https://docs.pytest.org/en/6.2.x/usage.html'
+                type: string
+
+jobs:
+    test:
+        runs-on: ubuntu-latest
+        env:
+            EMAIL: ${{ vars.EMAIL }}
+            PASSWORD: ${{ vars.PASSWORD }}
+            ENV: ${{ inputs.backend_env }}
+            LAUNCHER_VER: ${{ inputs.launcher_url_version }}        
+        steps:
+        - uses: actions/checkout@v3
+        - name: Set up Python
+          uses: actions/setup-python@v4
+          with:
+            python-version: '3.12'
+            cache: 'pip'
+            cache-dependency-path: requirements.txt
+
+        - name: Install Dependencies
+          run: |
+                python -m pip install --upgrade pip
+                pip install -r requirements.txt
+
+        - name: Check if Launcher is required
+          run: |
+            SELECTED_TESTS="${{ inputs.run_test }}"
+            echo "Collecting tests from: $SELECTED"
+
+            if pytest $SELECTED_TESTS --collect-only | grep -q "API.Launcher"; then
+              echo "launcher_required=true" >> $GITHUB_ENV
+              echo "Launcher is required for selected tests."
+            else
+              echo "launcher_required=false" >> $GITHUB_ENV
+              echo "Launcher is NOT required for selected tests."
+            fi
+
+        - name: Cache Test Adapter
+          id: cache-adapter
+          uses: actions/cache@v4
+          with:
+            path: /home/runner/mlx/deps/adapter_tester
+            key: adapter-${{ inputs.adapter_version }}
+            
+        - name: Set Up Test Adapter
+          if: steps.cache-adapter.outputs.cache-hit != 'true' && env.launcher_required == 'true'  # Only run if not cached
+          run: |
+            set -e
+            ADAPTER_DIR=/home/runner/mlx/deps/adapter_tester
+            mkdir -p $ADAPTER_DIR
+            wget https://ml000x-dev-dists.s3.eu-north-1.amazonaws.com/adapter_tester/${{ inputs.adapter_version }}/linux/adapter-amd64.bin -O $ADAPTER_DIR/adapter.bin
+            chmod +x $ADAPTER_DIR/adapter.bin
+            echo "1.0" > $ADAPTER_DIR/VERSION
+        
+        - name: Set Up Launcher
+          if: env.launcher_required == 'true'
+          run: |
+                set -e
+                LAUNCHER_DIR=/home/runner/mlx/deps/launcher/master
+                mkdir -p $LAUNCHER_DIR
+                if [[ "${{ inputs.bucket }}" == 'DEV' ]]; then
+                LAUNCHER_URL="https://ml000x-dev-dists.s3.eu-north-1.amazonaws.com/launcher-mlx"
+                echo "Downloading DEV Launcher ${{ inputs.launcher_build }}"
+                else
+                LAUNCHER_URL="https://mlxdists.s3.eu-west-3.amazonaws.com/launcher"
+                echo "Downloading PROD Launcher ${{ inputs.launcher_build }}"
+                fi
+                wget $LAUNCHER_URL/${{ inputs.launcher_build }}/launcher-linux_amd64.bin -O $LAUNCHER_DIR/launcher-linux_amd64.bin
+                chmod +x $LAUNCHER_DIR/launcher-linux_amd64.bin
+        
+        
+        - name: Run Tests
+          run:  |
+                TEST_CMD="pytest"
+                # if Pytest markers or test files have been specified
+                if [ -n "${{ inputs.run_test }}" ]; then
+                TEST_CMD="$TEST_CMD ${{ inputs.run_test }}"
+                else TEST_CMD="$TEST_CMD"
+                fi
+                echo "Starting tests with: $TEST_CMD"
+                eval $TEST_CMD
+
+        - name: Upload Launcher Log File as Artifact
+          if: always()
+          uses: actions/upload-artifact@v4
+          with:
+            name: launcher-logs
+            path: ~/mlx/logs/launcher_*
+        
+        - name: Upload Log File as Artifact
+          if: always()
+          uses: actions/upload-artifact@v4
+          with:
+            name: latest-run-logs
+            path: my_logs.log
+
+        - name: Upload HTML Report as Artifact
+          if: always()
+          uses: actions/upload-artifact@v4
+          with:
+            name: pytest-report
+            path: report.html
